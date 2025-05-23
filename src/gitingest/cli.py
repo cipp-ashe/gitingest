@@ -1,4 +1,37 @@
-"""Command-line interface for the Gitingest package."""
+"""
+Command-line interface for the Gitingest package.
+
+This module provides a comprehensive CLI for analyzing codebases and repositories.
+It supports multiple output formats, advanced filtering, debugging features, and
+both local directory and remote repository analysis.
+
+Key Features:
+    - Multiple output formats (txt, json, markdown)
+    - Dry-run mode for preview without processing
+    - Print-only mode for console output
+    - Debug mode with temporary directory preservation
+    - Advanced filtering with include/exclude patterns
+    - Private repository access via PAT tokens
+    - Comprehensive error handling and user feedback
+
+Examples:
+    Basic usage:
+        $ gitingest .
+        $ gitingest https://github.com/user/repo
+    
+    Advanced usage:
+        $ gitingest --dry-run --output-format json --include-pattern "*.py" .
+        $ gitingest --print-only --keep-temp https://github.com/user/repo
+        
+    Filtering:
+        $ gitingest --include-pattern "*.py" --exclude-pattern "test_*" .
+        
+    Private repos:
+        $ gitingest --pat-token TOKEN https://github.com/private/repo
+
+Author: Gitingest Team
+License: MIT
+"""
 
 # pylint: disable=no-value-for-parameter
 
@@ -18,6 +51,14 @@ from gitingest.entrypoint import ingest_async
 @click.option("--exclude-pattern", "-e", multiple=True, help="Patterns to exclude")
 @click.option("--include-pattern", "-i", multiple=True, help="Patterns to include")
 @click.option("--branch", "-b", default=None, help="Branch to clone and ingest")
+@click.option("--include-summary/--no-include-summary", default=True, help="Include summary in export")
+@click.option("--include-structure/--no-include-structure", default=True, help="Include directory structure in export")
+@click.option("--include-content/--no-include-content", default=True, help="Include file contents in export")
+@click.option("--output-format", type=click.Choice(["txt", "json", "markdown"]), default="txt", help="Output format for export")
+@click.option("--pat-token", default=None, help="GitHub Personal Access Token for private repo access")
+@click.option("--dry-run", is_flag=True, help="Analyze and show what would be processed without writing files")
+@click.option("--print-only", is_flag=True, help="Print output to console instead of writing to file")
+@click.option("--keep-temp", is_flag=True, help="Keep temporary directories for debugging (useful for development)")
 def main(
     source: str,
     output: Optional[str],
@@ -25,6 +66,14 @@ def main(
     exclude_pattern: Tuple[str, ...],
     include_pattern: Tuple[str, ...],
     branch: Optional[str],
+    include_summary: bool,
+    include_structure: bool,
+    include_content: bool,
+    output_format: str,
+    pat_token: Optional[str],
+    dry_run: bool,
+    print_only: bool,
+    keep_temp: bool,
 ):
     """
      Main entry point for the CLI. This function is called when the CLI is run as a script.
@@ -48,8 +97,7 @@ def main(
         The branch to clone (optional).
     """
     # Main entry point for the CLI. This function is called when the CLI is run as a script.
-    asyncio.run(_async_main(source, output, max_size, exclude_pattern, include_pattern, branch))
-
+    asyncio.run(_async_main(source, output, max_size, exclude_pattern, include_pattern, branch, include_summary, include_structure, include_content, output_format, pat_token, dry_run, print_only, keep_temp))
 
 async def _async_main(
     source: str,
@@ -58,6 +106,14 @@ async def _async_main(
     exclude_pattern: Tuple[str, ...],
     include_pattern: Tuple[str, ...],
     branch: Optional[str],
+    include_summary: bool,
+    include_structure: bool,
+    include_content: bool,
+    output_format: str,
+    pat_token: Optional[str],
+    dry_run: bool,
+    print_only: bool,
+    keep_temp: bool,
 ) -> None:
     """
     Analyze a directory or repository and create a text dump of its contents.
@@ -91,16 +147,55 @@ async def _async_main(
         exclude_patterns = set(exclude_pattern)
         include_patterns = set(include_pattern)
 
-        if not output:
-            output = OUTPUT_FILE_NAME
-        summary, _, _ = await ingest_async(source, max_size, include_patterns, exclude_patterns, branch, output=output)
+        # Handle dry-run mode
+        if dry_run:
+            click.echo("🔍 DRY RUN MODE - Analyzing what would be processed...")
+            click.echo(f"Source: {source}")
+            click.echo(f"Max file size: {max_size:,} bytes")
+            click.echo(f"Include patterns: {include_patterns if include_patterns else 'None'}")
+            click.echo(f"Exclude patterns: {exclude_patterns if exclude_patterns else 'Default patterns only'}")
+            click.echo(f"Output format: {output_format}")
+            click.echo(f"Branch: {branch if branch else 'Default'}")
+            click.echo("No files will be written or repositories cloned.")
+            return
 
-        click.echo(f"Analysis complete! Output written to: {output}")
-        click.echo("\nSummary:")
-        click.echo(summary)
+        # Determine output handling
+        output_file = None if print_only else (output or OUTPUT_FILE_NAME)
+        
+        summary, tree, content = await ingest_async(
+            source, 
+            max_size, 
+            include_patterns, 
+            exclude_patterns, 
+            branch, 
+            output=output_file, 
+            include_summary=include_summary, 
+            include_structure=include_structure, 
+            include_content=include_content, 
+            output_format=output_format, 
+            pat_token=pat_token,
+            keep_temp=keep_temp
+        )
+
+        # Handle print-only mode
+        if print_only:
+            click.echo("📄 PRINT-ONLY MODE - Output to console:")
+            click.echo("=" * 50)
+            if include_summary and summary:
+                click.echo(summary)
+                click.echo("-" * 30)
+            if include_structure and tree:
+                click.echo(tree)
+                click.echo("-" * 30)
+            if include_content and content:
+                click.echo(content)
+        else:
+            click.echo(f"✅ Analysis complete! Output written to: {output_file}")
+            click.echo("\nSummary:")
+            click.echo(summary)
 
     except Exception as exc:
-        click.echo(f"Error: {exc}", err=True)
+        click.echo(f"❌ Error: {exc}", err=True)
         raise click.Abort()
 
 

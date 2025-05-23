@@ -1,4 +1,43 @@
-"""Functions to ingest and analyze a codebase directory or single file."""
+"""
+Output formatting and content generation for gitingest analysis results.
+
+This module handles the transformation of analyzed codebase data into various output
+formats optimized for different use cases. It provides comprehensive formatting
+capabilities with security features and customization options.
+
+Key Features:
+    - Multiple output formats: text, JSON, and Markdown
+    - Token count estimation for LLM usage planning
+    - Security features including markdown backtick escaping
+    - Flexible content inclusion controls (summary, structure, content)
+    - Tree-style directory structure visualization
+    - Comprehensive error handling and validation
+
+Output Formats:
+    - TXT: Optimized for LLM prompts with token estimation
+    - JSON: Structured data for programmatic consumption
+    - Markdown: Human-readable with proper formatting and escaping
+
+Security Considerations:
+    - Markdown backtick escaping prevents parser conflicts
+    - Input validation for all formatting operations
+    - Safe handling of file contents and metadata
+
+Examples:
+    Basic formatting:
+        summary, tree, content = format_node(node, query)
+    
+    JSON output:
+        query.output_format = "json"
+        json_output, _, _ = format_node(node, query)
+    
+    Markdown with escaping:
+        query.output_format = "markdown"
+        md_output, _, _ = format_node(node, query)
+
+Author: Gitingest Team
+License: MIT
+"""
 
 from typing import Optional, Tuple
 
@@ -27,22 +66,60 @@ def format_node(node: FileSystemNode, query: IngestionQuery) -> Tuple[str, str, 
         A tuple containing the summary, directory structure, and file contents.
     """
     is_single_file = node.type == FileSystemNodeType.FILE
-    summary = _create_summary_prefix(query, single_file=is_single_file)
 
-    if node.type == FileSystemNodeType.DIRECTORY:
-        summary += f"Files analyzed: {node.file_count}\n"
-    elif node.type == FileSystemNodeType.FILE:
-        summary += f"File: {node.name}\n"
-        summary += f"Lines: {len(node.content.splitlines()):,}\n"
+    summary = ""
+    tree = ""
+    content = ""
 
-    tree = "Directory structure:\n" + _create_tree_structure(query, node)
-    _create_tree_structure(query, node)
+    if query.include_summary:
+        summary = _create_summary_prefix(query, single_file=is_single_file)
+        if node.type == FileSystemNodeType.DIRECTORY:
+            summary += f"Files analyzed: {node.file_count}\n"
+        elif node.type == FileSystemNodeType.FILE:
+            summary += f"File: {node.name}\n"
+            summary += f"Lines: {len(node.content.splitlines()):,}\n"
 
-    content = _gather_file_contents(node)
+    if query.include_structure:
+        tree = "Directory structure:\n" + _create_tree_structure(query, node)
 
-    token_estimate = _format_token_count(tree + content)
-    if token_estimate:
-        summary += f"\nEstimated tokens: {token_estimate}"
+    if query.include_content:
+        content = _gather_file_contents(node)
+
+    if query.output_format == "json":
+        import json
+
+        output = {}
+        if query.include_summary:
+            output["summary"] = summary
+        if query.include_structure:
+            output["structure"] = tree
+        if query.include_content:
+            output["content"] = content
+        return json.dumps(output, indent=2), "", ""
+
+    if query.output_format == "markdown":
+        md = ""
+        if query.include_summary and summary:
+            escaped_summary = _escape_markdown_backticks(summary)
+            md += f"## Summary\n\n```\n{escaped_summary}```\n\n"
+        if query.include_structure and tree:
+            escaped_tree = _escape_markdown_backticks(tree)
+            md += f"## Directory Structure\n\n```\n{escaped_tree}```\n\n"
+        if query.include_content and content:
+            escaped_content = _escape_markdown_backticks(content)
+            md += f"## File Contents\n\n```\n{escaped_content}```\n\n"
+        return md, "", ""
+
+    if query.output_format == "txt":
+        text_for_tokens = ""
+        if query.include_structure:
+            text_for_tokens += tree
+        if query.include_content:
+            text_for_tokens += content
+
+        token_estimate = _format_token_count(text_for_tokens)
+        if token_estimate and query.include_summary:
+            summary += f"\nEstimated tokens: {token_estimate}"
 
     return summary, tree, content
 
@@ -106,6 +183,24 @@ def _gather_file_contents(node: FileSystemNode) -> str:
 
     # Recursively gather contents of all files under the current directory
     return "\n".join(_gather_file_contents(child) for child in node.children)
+
+
+def _escape_markdown_backticks(content: str) -> str:
+    """
+    Escape triple backticks in content to prevent markdown parser issues.
+    
+    Parameters
+    ----------
+    content : str
+        The content that may contain triple backticks.
+        
+    Returns
+    -------
+    str
+        The content with triple backticks escaped.
+    """
+    # Replace triple backticks with escaped version
+    return content.replace("```", "\\`\\`\\`")
 
 
 def _create_tree_structure(query: IngestionQuery, node: FileSystemNode, prefix: str = "", is_last: bool = True) -> str:

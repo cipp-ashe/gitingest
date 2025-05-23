@@ -1,4 +1,5 @@
 """This module defines the FastAPI router for the home page of the application."""
+from typing import Optional
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
@@ -47,6 +48,7 @@ async def index_post(
     max_file_size: int = Form(...),
     pattern_type: str = Form(...),
     pattern: str = Form(...),
+    github_token: Optional[str] = Form(None),
 ) -> HTMLResponse:
     """
     Process the form submission with user input for query parameters.
@@ -67,6 +69,8 @@ async def index_post(
         The type of pattern used for the query, specified by the user.
     pattern : str
         The pattern string used in the query, specified by the user.
+    github_token : Optional[str]
+        GitHub Personal Access Token for private repository access, by default None.
 
     Returns
     -------
@@ -80,5 +84,6 @@ async def index_post(
         max_file_size,
         pattern_type,
         pattern,
+        github_token=github_token,
         is_index=True,
     )

@@ -1,14 +1,52 @@
 """This module contains functions for cloning a Git repository to a local path."""
 
 import os
+import shlex
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 from gitingest.schemas import CloneConfig
 from gitingest.utils.git_utils import check_repo_exists, ensure_git_installed, run_command
 from gitingest.utils.timeout_wrapper import async_timeout
 
 TIMEOUT: int = 60
+
+
+def _inject_token_into_url(url: str, token: str) -> str:
+    """
+    Inject a GitHub Personal Access Token into a repository URL for authentication.
+    
+    Parameters
+    ----------
+    url : str
+        The original repository URL (e.g., https://github.com/owner/repo.git)
+    token : str
+        The GitHub Personal Access Token
+        
+    Returns
+    -------
+    str
+        The authenticated URL (e.g., https://token@github.com/owner/repo.git)
+    """
+    parsed = urlparse(url)
+    
+    # Handle GitHub URLs specifically
+    if 'github.com' in parsed.netloc:
+        # Construct authenticated URL: https://token@github.com/owner/repo.git
+        authenticated_netloc = f"{token}@{parsed.netloc}"
+        authenticated_url = urlunparse((
+            parsed.scheme,
+            authenticated_netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment
+        ))
+        return authenticated_url
+    
+    # For non-GitHub URLs, return original (could be extended for other Git hosts)
+    return url
 
 
 @async_timeout(TIMEOUT)
@@ -47,8 +85,30 @@ async def clone_repo(config: CloneConfig) -> None:
         raise OSError(f"Failed to create parent directory {parent_dir}: {exc}") from exc
 
     # Check if the repository exists
-    if not await check_repo_exists(url):
-        raise ValueError("Repository not found, make sure it is public")
+    if config.pat_token:
+        from gitingest.utils.github_api import check_repo_exists_authenticated
+        # Extract owner and repo name from URL
+        try:
+            # Assuming URL format: https://github.com/owner/repo.git
+            parts = url.rstrip(".git").split("/")
+            owner = parts[-2]
+            repo = parts[-1]
+        except Exception:
+            raise ValueError("Invalid repository URL format for authenticated check")
+        
+        try:
+            exists = await check_repo_exists_authenticated(owner, repo, config.pat_token)
+            if not exists:
+                raise ValueError("Repository not found or access denied")
+        except Exception as e:
+            # If GitHub API check fails (e.g., SSL issues), proceed with clone attempt
+            # The git clone will fail with a proper error if the repo doesn't exist
+            print(f"Warning: GitHub API check failed ({e}), proceeding with clone attempt...")
+    else:
+        from gitingest.utils.git_utils import check_repo_exists
+        exists = await check_repo_exists(url)
+        if not exists:
+            raise ValueError("Repository not found or access denied")
 
     clone_cmd = ["git", "clone", "--single-branch"]
     # TODO re-enable --recurse-submodules
@@ -61,7 +121,12 @@ async def clone_repo(config: CloneConfig) -> None:
         if branch and branch.lower() not in ("main", "master"):
             clone_cmd += ["--branch", branch]
 
-    clone_cmd += [url, local_path]
+    # Use authenticated URL if token is provided
+    if config.pat_token:
+        authenticated_url = _inject_token_into_url(url, config.pat_token)
+        clone_cmd += [authenticated_url, local_path]
+    else:
+        clone_cmd += [url, local_path]
 
     # Clone the repository
     await ensure_git_installed()

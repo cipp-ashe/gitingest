@@ -45,7 +45,7 @@
     {% if error_message %}
         <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700"
              id="error-message"
-             data-message="{{ error_message }}">{{ error_message }}</div>
+             data-message="{{ error_message }}">{{ error_message | safe }}</div>
     {% endif %}
     {% with is_index=true, show_examples=true %}
         {% include 'components/git_form.jinja' %}

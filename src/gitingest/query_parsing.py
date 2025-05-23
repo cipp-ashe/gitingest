@@ -29,6 +29,11 @@ async def parse_query(
     from_web: bool,
     include_patterns: Optional[Union[str, Set[str]]] = None,
     ignore_patterns: Optional[Union[str, Set[str]]] = None,
+    include_summary: bool = True,
+    include_structure: bool = True,
+    include_content: bool = True,
+    output_format: str = "txt",
+    pat_token: Optional[str] = None,
 ) -> IngestionQuery:
     """
     Parse the input source (URL or path) to extract relevant details for the query.
@@ -49,12 +54,27 @@ async def parse_query(
         Patterns to include, by default None. Can be a set of strings or a single string.
     ignore_patterns : Union[str, Set[str]], optional
         Patterns to ignore, by default None. Can be a set of strings or a single string.
+    include_summary : bool, optional
+        Whether to include summary in the output.
+    include_structure : bool, optional
+        Whether to include directory structure in the output.
+    include_content : bool, optional
+        Whether to include file contents in the output.
+    output_format : str, optional
+        The output format, one of "txt", "json", or "markdown".
+    pat_token : Optional[str], optional
+        GitHub Personal Access Token for private repository access.
 
     Returns
     -------
     IngestionQuery
         A dataclass object containing the parsed details of the repository or file path.
     """
+
+    # Early validation: Check output format first for fail-fast behavior
+    allowed_formats = {"txt", "json", "markdown"}
+    if output_format not in allowed_formats:
+        raise ValueError(f"output_format must be one of {allowed_formats}, got '{output_format}'")
 
     # Determine the parsing method based on the source type
     if from_web or urlparse(source).scheme in ("https", "http") or any(h in source for h in KNOWN_GIT_HOSTS):
@@ -91,6 +111,11 @@ async def parse_query(
         max_file_size=max_file_size,
         ignore_patterns=ignore_patterns_set,
         include_patterns=parsed_include,
+        include_summary=include_summary,
+        include_structure=include_structure,
+        include_content=include_content,
+        output_format=output_format,
+        pat_token=pat_token,
     )
 
 
@@ -308,6 +333,14 @@ async def try_domains_for_user_and_repo(user_name: str, repo_name: str) -> str:
     """
     for domain in KNOWN_GIT_HOSTS:
         candidate = f"https://{domain}/{user_name}/{repo_name}"
-        if await check_repo_exists(candidate):
+        from gitingest.utils.github_api import check_repo_exists_authenticated
+        from gitingest.utils.git_utils import check_repo_exists
+        # TODO: Pass PAT token from config or context when available
+        pat_token = None
+        if pat_token:
+            exists = await check_repo_exists_authenticated(user_name, repo_name, pat_token)
+        else:
+            exists = await check_repo_exists(candidate)
+        if exists:
             return domain
     raise ValueError(f"Could not find a valid repository host for '{user_name}/{repo_name}'.")

@@ -52,6 +52,15 @@ def ingest_query(query: IngestionQuery) -> Tuple[str, str, str]:
         if not path.is_file():
             raise ValueError(f"Path {path} is not a file")
 
+        # Apply include/exclude patterns for single file ingestion
+        if query.ignore_patterns and _should_exclude(path, query.local_path, query.ignore_patterns):
+            # If the single file is explicitly ignored, raise an error or return empty content
+            raise ValueError(f"File '{path.name}' is excluded by ignore patterns.")
+        
+        if query.include_patterns and not _should_include(path, query.local_path, query.include_patterns):
+            # If include patterns are specified and this file doesn't match, raise an error
+            raise ValueError(f"File '{path.name}' does not match include patterns.")
+
         relative_path = path.relative_to(query.local_path)
 
         file_node = FileSystemNode(
